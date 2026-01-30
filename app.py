@@ -1,18 +1,20 @@
 import streamlit as st
 import requests
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
 # 페이지 설정
-st.set_page_config(page_title="종암중 급식표", page_icon="🍱")
+st.set_page_config(page_title="종암중 급식 알리미", page_icon="🍱")
 
-# 학교 정보 설정 (종암중학교 고유 코드)
+# 1. 학교 정보 설정
 ATP_PT_CODE = "J10"  # 서울특별시교육청
 SD_SCHUL_CODE = "7031154"  # 종암중학교
+# 종암중학교 홈페이지 급식 게시판 주소 (예시 - 실제 경로 확인 필요)
+SCHOOL_URL = "https://jongam.sen.ms.kr/71337/subMenu.do" 
 
 def get_meal_data(start_date, end_date):
     url = "https://open.neis.go.kr/hub/mealServiceDietInfo"
     params = {
-        "KEY": "YOUR_API_KEY", # 여기에 본인의 API 키를 넣으면 더 안정적입니다.
         "Type": "json",
         "pIndex": 1,
         "pSize": 100,
@@ -21,50 +23,82 @@ def get_meal_data(start_date, end_date):
         "MLSV_FROM_YMD": start_date,
         "MLSV_TO_YMD": end_date
     }
-    
-    response = requests.get(url, params=params)
-    return response.json()
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except:
+        return None
+
+def get_meal_image(target_date):
+    """
+    학교 홈페이지에서 식단 사진을 크롤링하는 함수
+    (참고: 홈페이지 구조가 바뀌면 수정이 필요합니다.)
+    """
+    try:
+        # 실제 학교 홈페이지의 급식 갤러리/게시판 구조에 맞춰 requests를 보냅니다.
+        # 아래는 일반적인 학교 홈페이지 크롤링 예시입니다.
+        res = requests.get(SCHOOL_URL, timeout=5)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # 날짜와 매칭되는 이미지 태그를 찾는 로직 (예: '2024-05-20' 포함된 게시물)
+        # ※ 실제 홈페이지 태그 구조(class명 등)를 분석하여 적용해야 합니다.
+        img_tag = soup.find('img', alt=True) # 예시용 로직
+        if img_tag:
+            return img_tag['src']
+    except:
+        return None
+    return None
 
 st.title("🍱 종암중학교 급식 알리미")
 
-# 날짜 계산
-today = datetime.now()
-today_str = today.strftime("%Y%m%d")
-start_of_week = (today - timedelta(days=today.weekday())).strftime("%Y%m%d")
-end_of_week = (today + timedelta(days=6-today.weekday())).strftime("%Y%m%d")
+# 사이드바 날짜 선택
+selected_date = st.sidebar.date_input("📅 날짜 선택", datetime.now())
+selected_date_str = selected_date.strftime("%Y%m%d")
 
-# 데이터 가져오기
+# 데이터 로드
+start_of_week = (selected_date - timedelta(days=selected_date.weekday())).strftime("%Y%m%d")
+end_of_week = (selected_date + timedelta(days=6-selected_date.weekday())).strftime("%Y%m%d")
 data = get_meal_data(start_of_week, end_of_week)
 
-# 탭 구성
-tab1, tab2 = st.tabs(["오늘의 급식", "이번 주 급식"])
+tab1, tab2 = st.tabs(["오늘의 메뉴", "주간 식단"])
 
 with tab1:
-    st.header(f"📅 {today.strftime('%Y년 %m월 %d일')}")
+    st.subheader(f"📅 {selected_date.strftime('%Y년 %m월 %d일')}")
     
-    found_today = False
-    if "mealServiceDietInfo" in data:
+    found = False
+    if data and "mealServiceDietInfo" in data:
         for row in data["mealServiceDietInfo"][1]["row"]:
-            if row["MLSV_YMD"] == today_str:
-                # 메뉴 정제 (알러지 정보 등 제거)
-                menu = row["DDISH_NM"].replace("<br/>", "\n")
-                st.success("#### [오늘의 메뉴]")
-                st.text(menu)
-                st.info(f"칼로리: {row['CAL_INFO']}")
+            if row["MLSV_YMD"] == selected_date_str:
+                col1, col2 = st.columns([1, 1])
                 
-                # 사진 정보 (나이스 API는 식단 사진 URL을 직접 제공하지 않는 경우가 많아 
-                # 학교 홈페이지 사진 연동은 추가 크롤링이 필요할 수 있습니다.)
-                st.warning("⚠️ 사진은 학교 홈페이지 사정에 따라 제공되지 않을 수 있습니다.")
-                found_today = True
+                with col1:
+                    st.success("#### 🍴 식단 메뉴")
+                    menu = row["DDISH_NM"].replace("<br/>", "\n")
+                    st.text(menu)
+                    st.info(f"🔥 {row['CAL_INFO']}")
+                
+                with col2:
+                    st.success("#### 📸 식단 사진")
+                    img_url = get_meal_image(selected_date_str)
+                    if img_url:
+                        st.image(img_url, use_column_width=True)
+                    else:
+                        st.warning("등록된 식단 사진이 없습니다.")
+                
+                found = True
     
-    if not found_today:
-        st.error("❌ 오늘은 급식 메뉴가 등록되어 있지 않습니다.")
+    if not found:
+        st.error("💬 선택하신 날짜에는 급식 메뉴가 등록되지 않았습니다.")
 
 with tab2:
-    st.header("🗓️ 이번 주 전체 식단")
-    if "mealServiceDietInfo" in data:
+    st.header("🗓️ 주간 식단표")
+    if data and "mealServiceDietInfo" in data:
         for row in data["mealServiceDietInfo"][1]["row"]:
-            with st.expander(f"{row['MLSV_YMD'][4:6]}월 {row['MLSV_YMD'][6:]}일 식단"):
+            date_obj = datetime.strptime(row["MLSV_YMD"], "%Y%m%d")
+            with st.expander(f"{date_obj.strftime('%m/%d (%a)')}"):
                 st.write(row["DDISH_NM"].replace("<br/>", ", "))
     else:
-        st.write("이번 주 급식 정보가 없습니다.")
+        st.write("데이터가 없습니다.")
+
+st.divider()
+st.caption("제작: Streamlit 급식 앱 | 데이터 출처: NEIS API")
